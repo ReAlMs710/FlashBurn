@@ -6,10 +6,41 @@
 using namespace std;
 namespace fs = std::filesystem;
 
-string usb = "No Drive Selected"; 
+//Added all of the iso files as global vars because I plan to use them in other functions later
+string usb = "No Drive Selected";
+string isoFileLocation;  
+string isoFileName;
+uintmax_t isoFileSize;
+
+bool fileLimit;
+
 
 bool doesDiskExist(const string& disk) {
     return fs::exists(disk);  
+}
+
+string formatSize(uintmax_t size) {
+    const double KB = 1024.0;
+    const double MB = KB * 1024;
+    const double GB = MB * 1024;
+    const double TB = GB * 1024;
+
+    ostringstream formattedSize;
+    formattedSize << fixed << setprecision(2);
+
+    if (size >= TB) {
+        formattedSize << (size / TB) << " TB";
+    } else if (size >= GB) {
+        formattedSize << (size / GB) << " GB";
+    } else if (size >= MB) {
+        formattedSize << (size / MB) << " MB";
+    } else if (size >= KB) {
+        formattedSize << (size / KB) << " KB";
+    } else {
+        formattedSize << size << " bytes";
+    }
+
+    return formattedSize.str();
 }
 
 void selectedFlash() {
@@ -135,11 +166,57 @@ void partToGPT() {
 }
 
 void uefiBoot() {
-    string isoFileLocation;
-	cout << "UEFI Boot USB\n";
-	selectedFlash();
-    cout << "\nType the full file location of where the ISO is located\n\n";
+    string buffer;
+    char check;
+    do { 
+        clearScreen();
+        cout << "UEFI Boot USB\n";
+        selectedFlash();
+        cout << "\nType the full file location of where the ISO is located\n\n";
+        cin >> isoFileLocation;
+        
+        isoFileName = filesystem::path(isoFileLocation).filename().string();
+        isoFileSize = filesystem::file_size(isoFileLocation);
+        fileLimit = isoFileSize > (4ULL * 1024 * 1024 * 1024);
+        
+        clearScreen();
+        selectedFlash();
+        cout << "\nFile Name: " << isoFileName << endl;
+        cout << "File Size: " << formatSize(isoFileSize) << endl;
+        cout << "File Limit Exceeded: " << (fileLimit ? "Yes" : "No") << endl;
+
+        cout << "Does this look good? (y/n)\n";
+        cin >> check;
+
+    } while (check == 'n'); 
+    
+    clearScreen();
+    selectedFlash();
+    cout << endl;
+    moreSelectedFlashInfo();
+    cout << endl;
+    cout << "This will DESTROY all contents on the drive.\n";
+    cout << "\n\033[31mThis is your final warning. Everything will be wiped. (y/n)\033[0m\n\n";
+    cin >> check;
+
+    if (check == 'y') {
+        //start gpt reformatting
+        string gptWipe = ("echo -e \"o\\ny\\nw\\ny\\n\" | sudo gdisk " + usb);
+        system(gptWipe.c_str()); //conv to c string
+        //construct fat32
+        cout << "\033[34mFormatting to GPT successful. Constructing file system... \033[0m\n";
+        string mkfsFat32("sudo mkfs.fat -F 32 " + usb);
+        system(mkfsFat32.c_str());
+        //dd install files
+        cout << "\033[34mDrive successfully formatted to FAT32, DD'ing install files...\033[0m\n";
+        string ddIsoTousb = "sudo dd if=" + isoFileLocation + " of=" + usb + " bs=8M status=progress oflag=direct"; 
+        system(ddIsoTousb.c_str());
+        //success message
+        cout << "\n\n\033[34mSuccess! Type anything and then enter to go back.\033[0m\n";
+        cin >> buffer;
+    }
 }
+
 
 void menu() {
     while (true) {
@@ -148,7 +225,8 @@ void menu() {
         cout << "FlashBurn\n\n";
         selectedFlash();
         cout << "1. Select a flash drive\n";
-        cout << "2, Partition to GPT\n\n";
+        cout << "2. Create Bootable UEFI Drive (recommended)\n";
+        cout << "3. Partition to GPT\n\n";
         cin >> selection;
 
         switch (selection) {
@@ -156,6 +234,9 @@ void menu() {
                 selectUSBDevice();
                 break;
             case 2:
+                uefiBoot();
+                break;
+            case 3:
                 partToGPT();
                 break;
             default:
