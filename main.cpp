@@ -14,7 +14,6 @@ uintmax_t isoFileSize;
 
 bool fileLimit;
 
-
 bool doesDiskExist(const string& disk) {
     return fs::exists(disk);  
 }
@@ -64,21 +63,11 @@ void clearScreen() {
 }
 
 bool GPTFDiskInstallCheck() {
-    return system("command -v gptfdisk > /dev/null 2>&1") == 0;
+    return system("command -v gdisk > /dev/null 2>&1") == 0;
 }
 
-void installGptfdisk() {
-    clearScreen();
-    char response;
-    cout << "gptfdisk is not installed. Would you like to install it now? (y/n): ";
-    cin >> response;
-
-    if (response == 'y' || response == 'Y') {
-        system("sudo pacman -S gptfdisk");
-    } else {
-        cerr << "gptfdisk is required for creating GPT partition schemes!";
-        exit(1);
-    }
+bool partedInstallCheck() {
+    return system("command -v parted > /dev/null 2>&1") == 0;
 }
 
 void selectUSBDevice() {
@@ -125,6 +114,14 @@ void selectUSBDevice() {
 
 void partToGPT() {
     string buffer;
+    if (usb == "No Drive Selected") {
+        clearScreen();
+        selectedFlash();
+        cout << "\nYou did not select a flash drive. Please select a flash drive before continuing.\n";
+        cout << "\nType anything and then enter to go back.\n\n";
+        cin >> buffer;
+        return;
+    }
     char finalChoice;
     clearScreen();
     cout << "Partition to GPT\n";
@@ -165,9 +162,72 @@ void partToGPT() {
     }
 }
 
+void partToMBR() {
+    string buffer;
+    if (usb == "No Drive Selected") {
+        clearScreen();
+        selectedFlash();
+        cout << "\nYou did not select a flash drive. Please select a flash drive before continuing.\n";
+        cout << "\nType anything and then enter to go back.\n\n";
+        cin >> buffer;
+        return;
+    }
+    char finalChoice;
+    clearScreen();
+    cout << "Partition to MBR\n";
+    selectedFlash();
+    cout << "\n";
+	cout << "Partition to MBR will DELETE the contents of your flash drive. \nPlease back up any important data before continuing.\n";
+	cout << "Type accept to continue, anything else will bring you back.\n\n";
+	cin >> buffer;
+
+    if ((buffer == "accept" || buffer == "Accept") && usb != "No Drive Selected") {
+        cout << flush;
+        clearScreen();
+        selectedFlash();
+        moreSelectedFlashInfo();
+        cout << "\n\033[31mFinal Warning. Everything will be wiped. Are you sure? (y/n)\033[0m\n\n";
+        cin >> finalChoice;
+
+        if (finalChoice == 'y') {
+            string umountDrive("sudo umount " + usb);
+            string gptWipe = ("sudo parted " + usb + " --script mklabel msdos");
+            system(umountDrive.c_str());
+            cout << "\n\033[34mIf this complains about it not being mounted, don't worry. It doesn't matter.\n\033[0m";
+            system(gptWipe.c_str()); //conv to c string
+            cout << flush;
+            cout << "Success!\nType anything then press enter\n\n";
+            cin >> buffer;
+        }
+    }
+
+    //this is not needed, but i will delete later
+    else if (usb == "No Drive Selected") {
+        cout << flush;
+        clearScreen();
+        selectedFlash();
+        cout << "Failed!\n\n";
+        cout << "Make sure you select a drive!\n";
+        cout << "Type something and then enter to continue\n\n";
+        cin >> buffer;
+    }
+    else {
+        cout << "\nYou typed something wrong. Aborting.";
+        cin >> buffer;
+    }
+}
+
 void uefiBoot() {
     string buffer;
     char check;
+    if (usb == "No Drive Selected") {
+        clearScreen();
+        selectedFlash();
+        cout << "\nYou did not select a flash drive. Please select a flash drive before continuing.\n";
+        cout << "\nType anything and then enter to go back.\n\n";
+        cin >> buffer;
+        return;
+    }
     do { 
         clearScreen();
         cout << "UEFI Boot USB\n";
@@ -212,9 +272,55 @@ void uefiBoot() {
         string ddIsoTousb = "sudo dd if=" + isoFileLocation + " of=" + usb + " bs=8M status=progress oflag=direct"; 
         system(ddIsoTousb.c_str());
         //success message
+        cout << flush; 
+        clearScreen();
         cout << "\n\n\033[34mSuccess! Type anything and then enter to go back.\033[0m\n";
         cin >> buffer;
     }
+}
+
+void legacyBoot() {
+    string buffer;
+    char check;
+    if (usb == "No Drive Selected") {
+        clearScreen();
+        selectedFlash();
+        cout << "\nYou did not select a flash drive. Please select a flash drive before continuing.\n";
+        cout << "\nType anything and then enter to go back.\n\n";
+        cin >> buffer;
+        return;
+    }
+
+    do { 
+        clearScreen();
+        cout << "UEFI Boot USB\n";
+        selectedFlash();
+        cout << "\nType the full file location of where the ISO is located\n\n";
+        cin >> isoFileLocation;
+        
+        isoFileName = filesystem::path(isoFileLocation).filename().string();
+        isoFileSize = filesystem::file_size(isoFileLocation);
+        fileLimit = isoFileSize > (4ULL * 1024 * 1024 * 1024);
+        
+        clearScreen();
+        selectedFlash();
+        cout << "\nFile Name: " << isoFileName << endl;
+        cout << "File Size: " << formatSize(isoFileSize) << endl;
+        cout << "File Limit Exceeded: " << (fileLimit ? "Yes" : "No") << endl;
+
+        cout << "Does this look good? (y/n)\n";
+        cin >> check;
+
+    } while (check == 'n'); 
+
+    clearScreen();
+    selectedFlash();
+    cout << endl;
+    moreSelectedFlashInfo();
+    cout << endl;
+    cout << "This will DESTROY all contents on the drive.\n";
+    cout << "\n\033[31mThis is your final warning. Everything will be wiped. (y/n)\033[0m\n\n";
+    cin >> check;
 }
 
 
@@ -226,7 +332,9 @@ void menu() {
         selectedFlash();
         cout << "1. Select a flash drive\n";
         cout << "2. Create Bootable UEFI Drive (recommended)\n";
-        cout << "3. Partition to GPT\n\n";
+        cout << "3. Create Bootable BIOS Drive (for legacy systems)\n";
+        cout << "3. Partition to GPT\n";
+        cout << "4. Partition to MBR\n\n";
         cin >> selection;
 
         switch (selection) {
@@ -239,6 +347,9 @@ void menu() {
             case 3:
                 partToGPT();
                 break;
+            case 4:
+                partToMBR();
+                break;
             default:
                 cout << "Wrong selection";
                 break;
@@ -247,9 +358,34 @@ void menu() {
 }
 
 int main() {
+    string packageChoice;
     if (!GPTFDiskInstallCheck()) {
-        installGptfdisk;
+        clearScreen();
+        cout << "GPTFdisk is not detected (required for gdisk command), ensure that it is installed.\nYou may override this if it is installed (ONLY DO THIS IF IT IS INSTALLED)\n\nIf you choose to continue, you type 'continue', anything else will exit the program.\n\n";
+        cin >> packageChoice;
+
+        if (packageChoice == "continue" || packageChoice == "Continue") {
+            menu();
+        }
+        else {
+            clearScreen();
+            return 0;
+        }
     }
+    if (!partedInstallCheck()) {
+        clearScreen();
+        cout << "parted is not detected (required for parted command), ensure that it is installed.\nYou may override this if it is installed (ONLY DO THIS IF IT IS INSTALLED)\n\nIf you choose to continue, you type 'continue', anything else will exit the program.\n\n";
+        cin >> packageChoice;
+
+        if (packageChoice == "continue" || packageChoice == "Continue") {
+            menu();
+        }
+        else {
+            clearScreen();
+            return 0;
+        }
+    }
+
     menu();
     return 0;
 }
